@@ -1,0 +1,125 @@
+# ==============================================================================
+# HumanMark Docker Compose
+# ==============================================================================
+#
+# Local development environment with all services.
+#
+# Usage:
+#   docker-compose up        - Start all services
+#   docker-compose up -d     - Start in background
+#   docker-compose down      - Stop all services
+#   docker-compose logs -f   - Follow logs
+#
+# ==============================================================================
+
+version: '3.8'
+
+services:
+  # ----------------------------------------------------------------------------
+  # HumanMark API
+  # ----------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: humanmark-api
+    ports:
+      - "8080:8080"
+    environment:
+      # Server configuration
+      PORT: 8080
+      ENV: development
+      LOG_LEVEL: debug
+      
+      # Database (optional - falls back to in-memory)
+      DATABASE_URL: postgres://humanmark:humanmark@postgres:5432/humanmark?sslmode=disable
+      
+      # Redis (optional - for caching)
+      REDIS_URL: redis://redis:6379/0
+      
+      # Detection APIs (set these for real detection)
+      # HIVE_API_KEY: ${HIVE_API_KEY}
+      # OPENAI_API_KEY: ${OPENAI_API_KEY}
+      # GPTZERO_API_KEY: ${GPTZERO_API_KEY}
+      
+      # Rate limiting
+      RATE_LIMIT_PER_MINUTE: 100
+      
+      # CORS (allow all in development)
+      ALLOWED_ORIGINS: "*"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - humanmark
+
+  # ----------------------------------------------------------------------------
+  # PostgreSQL Database
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: humanmark-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: humanmark
+      POSTGRES_PASSWORD: humanmark
+      POSTGRES_DB: humanmark
+    volumes:
+      # Persist data
+      - postgres_data:/var/lib/postgresql/data
+      # Init scripts
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U humanmark"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - humanmark
+
+  # ----------------------------------------------------------------------------
+  # Redis Cache
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: humanmark-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - humanmark
+
+# ==============================================================================
+# Networks
+# ==============================================================================
+
+networks:
+  humanmark:
+    driver: bridge
+
+# ==============================================================================
+# Volumes
+# ==============================================================================
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
